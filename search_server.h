@@ -1,5 +1,7 @@
 #pragma once
 
+#include "synchronize.h"
+
 #include <istream>
 #include <ostream>
 #include <set>
@@ -8,6 +10,8 @@
 #include <map>
 #include <unordered_map>
 #include <string>
+#include <future>
+
 using namespace std;
 
 struct Item {
@@ -18,7 +22,7 @@ struct Item {
 class InvertedIndex {
 public:
 	void Add(const string& document);
-	const vector<Item>& Lookup(const string& word) const;
+	vector<Item> Lookup(const string& word) const;
 	InvertedIndex() = default;
 	InvertedIndex(InvertedIndex&& other);
 	void operator=(InvertedIndex&& other);
@@ -33,6 +37,12 @@ public:
 	explicit SearchServer(istream& document_input);
 	void UpdateDocumentBase(istream& document_input);
 	void AddQueriesStream(istream& query_input, ostream& search_results_output);
+	void WaitAll();
 private:
-	InvertedIndex index;
+	Synchronized<InvertedIndex> index;
+
+	vector<future<void>> futures;
+
+	void AddQueriesStreamSingleThread(
+		istream& query_input, ostream& search_results_output);
 };

@@ -27,6 +27,7 @@ void TestFunctionality(
     srv.UpdateDocumentBase(docs_input);
     ostringstream queries_output;
     srv.AddQueriesStream(queries_input, queries_output);
+    srv.WaitAll();
 
     const string result = queries_output.str();
     const auto lines = SplitBy(Strip(result), '\n');

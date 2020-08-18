@@ -143,6 +143,7 @@
     <ClCompile Include="parse.cpp" />
     <ClCompile Include="search_server.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="synchronize.h" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="iterator_range.h" />

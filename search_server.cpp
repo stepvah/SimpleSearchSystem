@@ -1,6 +1,7 @@
 #pragma comment(linker, "/STACK:16777216")
 #include "search_server.h"
 #include "iterator_range.h"
+#include "synchronize.h"
 
 #include <algorithm>
 #include <iterator>
@@ -9,12 +10,27 @@
 #include <array>
 #include <memory>
 #include <vector>
+#include <chrono>
 #include <unordered_map>
 using namespace std;
 
-vector<string> SplitIntoWords(const string& line) {
-	istringstream words_input(line);
-	return { istream_iterator<string>(words_input), istream_iterator<string>() };
+vector<string_view> SplitIntoWords(const string& line) {
+	string_view str = line;
+	vector<string_view> result; result.reserve(1'000);
+
+	while (true) {
+		size_t space = str.find(' ');
+		auto word = str.substr(0, space);
+
+		if (!word.empty()) {
+			result.push_back(word);
+		}
+
+		if (space == str.npos) break;
+		else str.remove_prefix(space + 1);
+	}
+
+	return result;
 }
 
 SearchServer::SearchServer(istream& document_input) {
@@ -34,6 +50,23 @@ void SearchServer::UpdateDocumentBase(istream& document_input) {
 void SearchServer::AddQueriesStream(
 	istream& query_input, ostream& search_results_output
 ) {
+	if (futures.size() > 5) {
+		while (true) {
+			for (auto& fut : futures) {
+				if (fut.wait_for(1ms) == future_status::ready) {
+					fut = async(&SearchServer::AddQueriesStreamSingleThread, this, ref(query_input), ref(search_results_output));
+					return;
+				}
+			}
+			this_thread::sleep_for(50ms);
+		}
+	}
+	futures.push_back(async(&SearchServer::AddQueriesStreamSingleThread, this, ref(query_input), ref(search_results_output)));
+}
+
+void SearchServer::AddQueriesStreamSingleThread(
+	istream& query_input, ostream& search_results_output
+) {
 	vector<size_t> docid_count(50'000, 0);
 	vector<pair<size_t, size_t*>> search_results;
 	search_results.reserve(50'000);
@@ -45,7 +78,12 @@ void SearchServer::AddQueriesStream(
 		search_results.clear();
 
 		for (const auto& word : words) {
-			for (const Item& item : index.Lookup(word)) {
+			vector<Item> items;
+			{
+				auto access = index.GetAccess();
+				items = access.ref_to_value.Lookup(string(word));
+			}
+			for (const Item& item : items) {
 				if (docid_count[item.dockid] == 0) {
 					search_results.push_back(
 						make_pair(item.dockid, &docid_count[item.dockid]));
@@ -83,11 +121,15 @@ InvertedIndex::InvertedIndex(InvertedIndex&& other)
 	other.num = 0;
 }
 
-void InvertedIndex::operator=(InvertedIndex&& other)
-{
+void InvertedIndex::operator=(InvertedIndex&& other) {
 	index = move(other.index);
 	num = other.num;
 	other.num = 0;
+}
+
+void SearchServer::WaitAll() {
+	for (auto& f : futures)
+		f.get();
 }
 
 void InvertedIndex::Add(const string& document) {
@@ -96,7 +138,7 @@ void InvertedIndex::Add(const string& document) {
 
 	for (auto& word : SplitIntoWords(document)) {
 		if (auto it = words.find(word); it == words.end()) {
-			auto& vec = index[word];
+			auto& vec = index[string(word)];
 			vec.push_back({ docid, 1 });
 			words[word] = &vec[vec.size() - 1].hitcount;
 		} else {
@@ -105,9 +147,9 @@ void InvertedIndex::Add(const string& document) {
 	}
 }
 
-const vector<Item> empty__;
+vector<Item> empty__;
 
-const vector<Item>& InvertedIndex::Lookup(const string& word) const {
+vector<Item> InvertedIndex::Lookup(const string& word) const {
 	if (auto it = index.find(word); it != index.end()) {
 		return it->second;
 	}
